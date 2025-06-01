@@ -1,0 +1,14 @@
+# .gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+db.sqlite3
+staticfiles_collected/
+mediafiles_collected/
+.env
+.vscode/
+venv/
+env/
+*.log
+# Thêm các file/thư mục không cần thiết khác
