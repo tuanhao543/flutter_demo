@@ -19,9 +19,34 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser, FormParser
 from .models import RegisteredUser, AttendanceLog # Đảm bảo import đúng model Django
-from .serializers import RegisteredUserSerializer # Đảm bảo import serializer nếu dùng
+from .serializers import *
 from django.db.models import F, ExpressionWrapper, DurationField, Sum, DateField, Min, Max
 from django.db.models.functions import TruncDate # Cast không thấy sử dụng trực tiếp
+
+
+class ListRegisteredUsersAPI(APIView):
+    def get(self, request, *args, **kwargs):
+        print("\n--- [ListRegisteredUsersAPI] GET Request Received ---")
+        try:
+            users = RegisteredUser.objects.all().order_by('name')
+            # Kiểm tra nếu model AI chưa được load thì không cần thiết ở đây, trừ khi bạn muốn lọc user dựa trên AI
+            # if not ensure_models_loaded(): 
+            #     return Response({"error": "AI models not loaded, cannot proceed"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+            if not users.exists():
+                print("[ListRegisteredUsersAPI] No registered users found in the database.")
+                return Response([], status=status.HTTP_200_OK) # Trả về mảng rỗng
+
+            serializer = RegisteredUserListSerializer(users, many=True)
+            print(f"[ListRegisteredUsersAPI] Returning {len(users)} users.")
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            error_msg = "An unexpected error occurred while fetching registered users."
+            print(f"[ListRegisteredUsersAPI] Unexpected Exception: {e}")
+            print(traceback.format_exc())
+            return Response({"error": error_msg, "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        
 
 # --- L2NormalizationLayer (Giữ lại nếu model embedding của bạn thực sự cần nó) ---
 class L2NormalizationLayer(tf.keras.layers.Layer):
@@ -36,6 +61,8 @@ class L2NormalizationLayer(tf.keras.layers.Layer):
     def compute_output_shape(self, input_shape):
         return input_shape
 # -------------------------------------------------------------------------------------
+
+
 
 # Biến toàn cục cho models, khởi tạo là None
 face_detector_model = None

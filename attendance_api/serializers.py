@@ -14,3 +14,8 @@ class AttendanceLogSerializer(serializers.ModelSerializer):
         model = AttendanceLog
         fields = ['id', 'user', 'user_name', 'check_in_time', 'check_out_time']
         read_only_fields = ['user_name'] # user_name chỉ để hiển thị
+        
+class RegisteredUserListSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RegisteredUser
+        fields = ['id', 'name'] # Chỉ cần id và name cho dropdown
