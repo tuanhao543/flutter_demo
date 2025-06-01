@@ -28,13 +28,12 @@ def create_superuser(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        # Nếu migration này là migration đầu tiên của app 'attendance_api' 
-        # và bạn muốn nó chạy sau khi các bảng của app 'auth' (chứa model User) đã được tạo:
+        ('attendance_api', '0002_registereduser_is_admin'), # <--- SỬA Ở ĐÂY
+        # Bạn vẫn có thể giữ dòng này nếu hàm create_superuser của bạn dùng get_user_model()
+        # và bạn muốn đảm bảo User model đã sẵn sàng, mặc dù thường thì dependency vào migration
+        # trước đó của cùng app là đủ nếu migration đó đã xử lý các model của app.
+        # Tuy nhiên, để an toàn và rõ ràng, việc giữ cả hai cũng không sao.
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-        
-        # Hoặc, nếu app 'attendance_api' của bạn đã có migration trước đó (ví dụ: 0002_some_other_change.py),
-        # bạn nên đặt dependency vào migration đó:
-        # ('attendance_api', '0002_some_other_change'), # Thay '0002_some_other_change' bằng tên file migration trước đó
     ]
 
     operations = [
