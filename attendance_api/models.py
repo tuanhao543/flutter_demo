@@ -28,3 +28,4 @@ class AttendanceLog(models.Model):
 
     class Meta:
         ordering = ['-check_in_time']
+        

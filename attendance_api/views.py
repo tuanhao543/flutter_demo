@@ -9,7 +9,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from datetime import datetime, timedelta # Thêm timedelta
 import json
 import traceback
-
+from django.utils.dateparse import parse_datetime
 from django.conf import settings
 from django.core.files.storage import FileSystemStorage # Không thấy sử dụng trực tiếp, có thể bỏ nếu không cần
 from django.utils import timezone
@@ -550,4 +550,57 @@ class UserWorkStatsAPI(APIView):
             error_msg = "An unexpected error occurred while generating statistics."
             print(f"[UserWorkStatsAPI] Unexpected Exception: {e}")
             print(traceback.print_exc()) # In đầy đủ traceback để debug
+            return Response({"error": error_msg, "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+class UserAttendanceLogsAPI(APIView):
+    def get(self, request, *args, **kwargs):
+        print("\n--- [UserAttendanceLogsAPI] GET Request Received ---")
+        try:
+            user_id_str = request.query_params.get('user_id')
+            date_from_str = request.query_params.get('date_from') # YYYY-MM-DD
+            date_to_str = request.query_params.get('date_to')     # YYYY-MM-DD
+
+            print(f"[UserAttendanceLogsAPI] Query params: user_id={user_id_str}, date_from={date_from_str}, date_to={date_to_str}")
+
+            if not user_id_str:
+                return Response({"error": "User ID is required."}, status=status.HTTP_400_BAD_REQUEST)
+            if not date_from_str or not date_to_str:
+                return Response({"error": "Both date_from and date_to are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                target_user_id = int(user_id_str)
+                # parse_datetime an toàn hơn vì nó có thể xử lý cả date và datetime
+                # nhưng chúng ta chỉ quan tâm đến phần ngày
+                date_from = parse_datetime(date_from_str + "T00:00:00Z") # Thêm giờ, phút, giây và UTC
+                date_to = parse_datetime(date_to_str + "T23:59:59.999999Z") 
+
+                if date_from is None or date_to is None:
+                    raise ValueError("Invalid date format. Use YYYY-MM-DD.")
+
+            except ValueError as ve:
+                return Response({"error": f"Invalid parameter format: {ve}"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if not RegisteredUser.objects.filter(id=target_user_id).exists():
+                return Response({"error": f"User with ID {target_user_id} does not exist."}, status=status.HTTP_404_NOT_FOUND)
+
+            print(f"[UserAttendanceLogsAPI] Fetching logs for User ID: {target_user_id} from {date_from} to {date_to}")
+
+            logs = AttendanceLog.objects.filter(
+                user_id=target_user_id,
+                check_in_time__gte=date_from,
+                check_in_time__lte=date_to # Bao gồm cả ngày kết thúc
+            ).order_by('check_in_time') # Sắp xếp theo thời gian check-in
+
+            if not logs.exists():
+                print("[UserAttendanceLogsAPI] No attendance logs found for the criteria.")
+                return Response([], status=status.HTTP_200_OK)
+
+            serializer = AttendanceLogDetailSerializer(logs, many=True)
+            print(f"[UserAttendanceLogsAPI] Returning {len(logs)} attendance logs.")
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            error_msg = "An unexpected error occurred while fetching attendance logs."
+            print(f"[UserAttendanceLogsAPI] Unexpected Exception: {e}")
+            print(traceback.format_exc())
             return Response({"error": error_msg, "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

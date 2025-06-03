@@ -8,4 +8,4 @@ class AttendanceLogAdmin(admin.ModelAdmin):
     search_fields = ('user__name',)
 
 admin.site.register(RegisteredUser)
-admin.site.register(AttendanceLog, AttendanceLogAdmin) # Đăng ký với custom admin
+admin.site.register(AttendanceLog, AttendanceLogAdmin)
