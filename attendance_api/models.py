@@ -16,10 +16,15 @@ class AttendanceLog(models.Model):
     user = models.ForeignKey(RegisteredUser, on_delete=models.CASCADE, related_name='attendance_logs')
     check_in_time = models.DateTimeField()
     check_out_time = models.DateTimeField(null=True, blank=True)
+    latitude = models.FloatField(null=True, blank=True, help_text="Vĩ độ tại thời điểm chấm công")
+    longitude = models.FloatField(null=True, blank=True, help_text="Kinh độ tại thời điểm chấm công")
     # status = models.CharField(max_length=50, blank=True, null=True) # Optional: 'Checked In', 'Masked'
 
     def __str__(self):
-        return f"{self.user.name} - In: {self.check_in_time} - Out: {self.check_out_time or 'N/A'}"
+        location_str = ""
+        if self.latitude is not None and self.longitude is not None:
+            location_str = f" (Loc: {self.latitude:.4f}, {self.longitude:.4f})"
+        return f"{self.user.name} - In: {self.check_in_time} - Out: {self.check_out_time or 'N/A'}{location_str}"
 
     class Meta:
         ordering = ['-check_in_time']

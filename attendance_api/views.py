@@ -269,103 +269,164 @@ class CheckInAPI(APIView):
     parser_classes = (MultiPartParser, FormParser)
 
     def post(self, request, *args, **kwargs):
-        if not ensure_models_loaded():
-            return Response({"error": f"AI models could not be loaded on server. Details: {models_load_status['error_message']}"}, 
+        print("\n--- [CheckInAPI] POST Request Received ---")
+        print(f"[CheckInAPI] Request Content-Type: {request.content_type}")
+        print(f"[CheckInAPI] Request Data (form fields): {request.data}") # Sẽ chứa latitude, longitude nếu có
+        print(f"[CheckInAPI] Request FILES (uploaded files): {request.FILES}")
+
+        # 1. Kiểm tra model AI đã sẵn sàng chưa
+        if not ensure_models_loaded(): # Hàm này bạn đã có để lazy load model
+            print(f"[CheckInAPI] AI models failed to load. Error: {models_load_status.get('error_message', 'Unknown error')}")
+            return Response({"error": f"AI models could not be loaded. Details: {models_load_status.get('error_message', 'Please check server logs')}"}, 
                             status=status.HTTP_503_SERVICE_UNAVAILABLE)
         
         if face_detector_model is None or recognition_model_instance is None:
-             return Response({"error": "AI models are not available after attempting to load. Please check server logs."}, 
+             print("[CheckInAPI] AI models are still None after attempting to load. Critical error.")
+             return Response({"error": "AI models are not available. Please check server logs."}, 
                              status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-        image_file = request.FILES.get('image')
-        if not image_file:
-            return Response({"error": "Image is required for check-in."}, status=status.HTTP_400_BAD_REQUEST)
+        # 2. Lấy file ảnh từ request
+        image_file_obj = request.FILES.get('image')
+        if not image_file_obj:
+            print("[CheckInAPI] Validation Error: 'image' file is missing.")
+            return Response({"error": "'image' file is required for check-in."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        print(f"[CheckInAPI] Received image file: {image_file_obj.name}")
+
+        # 3. Lấy dữ liệu kinh độ, vĩ độ từ request.data
+        latitude_str = request.data.get('latitude')
+        longitude_str = request.data.get('longitude')
+        
+        latitude = None
+        longitude = None
+
+        if latitude_str:
+            try:
+                latitude = float(latitude_str)
+            except ValueError:
+                print(f"[CheckInAPI] Invalid latitude value received: '{latitude_str}'. Will be stored as null.")
+                # Không trả lỗi, chỉ ghi nhận và lưu là null
+        if longitude_str:
+            try:
+                longitude = float(longitude_str)
+            except ValueError:
+                print(f"[CheckInAPI] Invalid longitude value received: '{longitude_str}'. Will be stored as null.")
+        
+        print(f"[CheckInAPI] Received Location - Lat: {latitude}, Lng: {longitude}")
 
         try:
-            image_stream = image_file.read()
+            # 4. Xử lý ảnh và nhận diện
+            image_stream = image_file_obj.read()
             image_np_arr = np.frombuffer(image_stream, np.uint8)
             image_np = cv2.imdecode(image_np_arr, cv2.IMREAD_COLOR)
 
             if image_np is None:
+                print("[CheckInAPI] Invalid image format or corrupted image.")
                 return Response({"error": "Invalid image format or corrupted image."}, status=status.HTTP_400_BAD_REQUEST)
 
-            detected_faces = detect_faces_api(image_np)
+            detected_faces = detect_faces_api(image_np) # Hàm tiện ích của bạn
             if not detected_faces:
-                # Trả về 200 OK để Flutter có thể xử lý message này, thay vì coi là lỗi server
+                print("[CheckInAPI] No face detected in the image.")
                 return Response({"message": "No face detected in the image.", "user_name": "N/A", "is_admin": False}, status=status.HTTP_200_OK) 
 
-            main_face_crop = detected_faces[0]['crop'] # Lấy khuôn mặt lớn nhất
+            main_face_crop = detected_faces[0]['crop']
+            current_embedding = get_embedding_api(main_face_crop) # Hàm tiện ích của bạn
 
-            current_embedding = get_embedding_api(main_face_crop)
             if current_embedding is None:
-                return Response({"error": "Could not extract face embedding from the detected face.", "is_admin": False}, 
+                print("[CheckInAPI] Could not extract face embedding from the detected face.")
+                return Response({"error": "Could not extract face embedding.", "is_admin": False}, 
                                 status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            print("[CheckInAPI] Embedding extracted from uploaded image.")
 
+            # 5. So sánh với người dùng đã đăng ký
             all_users = RegisteredUser.objects.all()
             if not all_users.exists():
+                print("[CheckInAPI] No users registered in the system.")
                 return Response({"message": "No users registered in the system yet.", "user_name": "Unknown", "is_admin": False}, 
                                 status=status.HTTP_200_OK)
 
             known_db_embeddings = []
-            known_db_users_map = {} # Dùng map để lấy user dễ hơn sau khi tìm similarity
+            known_db_users_map = {} # Map index với user object để truy xuất dễ dàng
             
             for user_profile in all_users:
                 try:
                     stored_embedding_list = json.loads(user_profile.average_embedding)
                     known_db_embeddings.append(np.array(stored_embedding_list))
-                    known_db_users_map[len(known_db_embeddings)-1] = user_profile # Map index với user object
+                    known_db_users_map[len(known_db_embeddings)-1] = user_profile
                 except json.JSONDecodeError:
-                    print(f"Error decoding embedding for user {user_profile.name}. Skipping this user for recognition.")
+                    print(f"[CheckInAPI] Error decoding embedding for user {user_profile.name}. Skipping this user for recognition.")
                     continue
             
-            if not known_db_embeddings: # Nếu không có embedding nào hợp lệ trong DB
+            if not known_db_embeddings:
+                print("[CheckInAPI] No valid user embeddings found in the database.")
                 return Response({"message": "No valid user embeddings found in the database.", "user_name": "Unknown", "is_admin": False}, 
                                 status=status.HTTP_200_OK)
+            print(f"[CheckInAPI] Comparing with {len(known_db_embeddings)} known user embeddings.")
 
-            # Tính cosine similarity
             similarities = cosine_similarity([current_embedding], np.array(known_db_embeddings))[0]
             best_match_idx = np.argmax(similarities)
             max_similarity = similarities[best_match_idx]
+            print(f"[CheckInAPI] Max similarity: {max_similarity:.4f} at index {best_match_idx}")
 
+            best_match_user = None
             if max_similarity >= settings.RECOGNITION_THRESHOLD_SETTING and best_match_idx in known_db_users_map:
                 best_match_user = known_db_users_map[best_match_idx]
+                print(f"[CheckInAPI] User recognized: {best_match_user.name} (ID: {best_match_user.id})")
             else:
+                print(f"[CheckInAPI] User not recognized or similarity ({max_similarity:.4f}) below threshold ({settings.RECOGNITION_THRESHOLD_SETTING}).")
                 return Response({
                     "message": "User not recognized or similarity below threshold.",
                     "user_name": "Unknown",
                     "is_admin": False,
-                    "similarity": float(max_similarity) # Trả về similarity để debug
+                    "similarity": float(max_similarity)
                 }, status=status.HTTP_200_OK)
 
-            # Ghi log chấm công
-            now = timezone.now()
-            # Tìm log check-in cuối cùng chưa check-out của user này
+            # 6. Ghi log chấm công (check-in hoặc check-out) với thông tin vị trí
+            now = timezone.now() # Sử dụng timezone.now() để có thời gian aware
             last_log = AttendanceLog.objects.filter(user=best_match_user, check_out_time__isnull=True).order_by('-check_in_time').first()
             
             attendance_status_msg = ""
-            if last_log:
-                # Nếu có log check-in chưa check-out -> thực hiện check-out
+            log_entry = None # Để tham chiếu đến log entry mới hoặc được cập nhật
+
+            if last_log: # Nếu có log check-in chưa check-out -> thực hiện check-out
                 last_log.check_out_time = now
+                # Quyết định xem có cập nhật vị trí khi check-out không.
+                # Thông thường, vị trí check-in quan trọng hơn.
+                # Nếu muốn cập nhật cả vị trí check-out:
+                # last_log.latitude = latitude
+                # last_log.longitude = longitude
                 last_log.save()
+                log_entry = last_log
                 attendance_status_msg = "Check-out successful"
-            else:
-                # Nếu không có log nào đang mở -> thực hiện check-in mới
-                AttendanceLog.objects.create(user=best_match_user, check_in_time=now)
+                print(f"[CheckInAPI] Check-out recorded for {best_match_user.name} at {now}. Log ID: {last_log.id}")
+            else: # Nếu không có log nào đang mở -> thực hiện check-in mới
+                log_entry = AttendanceLog.objects.create(
+                    user=best_match_user, 
+                    check_in_time=now,
+                    latitude=latitude,    # Lưu vị trí khi check-in
+                    longitude=longitude   # Lưu vị trí khi check-in
+                )
                 attendance_status_msg = "Check-in successful"
+                print(f"[CheckInAPI] Check-in recorded for {best_match_user.name} at {now} with Location (Lat: {latitude}, Lng: {longitude}). Log ID: {log_entry.id}")
             
+            # 7. Trả về response thành công
             return Response({
                 "message": attendance_status_msg,
                 "user_name": best_match_user.name,
-                "user_id": best_match_user.id, # Thêm user_id để Flutter lưu lại
-                "is_admin": best_match_user.is_admin, # Trả về trạng thái admin
-                "similarity": float(max_similarity),
-                "timestamp": now.isoformat() # Trả về timestamp của server
+                "user_id": best_match_user.id,
+                "is_admin": best_match_user.is_admin,
+                "similarity": float(max_similarity), # Có thể giữ lại để debug
+                "timestamp": now.isoformat(), # Thời gian server xử lý
+                # Tùy chọn: Trả về cả kinh độ, vĩ độ đã lưu nếu cần
+                # "latitude": log_entry.latitude if log_entry else None,
+                # "longitude": log_entry.longitude if log_entry else None,
             }, status=status.HTTP_200_OK)
 
         except Exception as e:
-            print(f"Error in CheckInAPI: {e}")
-            print(traceback.format_exc())
-            return Response({"error": "An unexpected error occurred during the check-in/out process.", "is_admin": False}, 
+            # Xử lý các lỗi không mong muốn khác
+            print(f"[CheckInAPI] Unexpected Error during processing: {e}")
+            print(traceback.format_exc()) # In đầy đủ traceback để debug
+            return Response({"error": "An unexpected error occurred during the check-in/out process.", "is_admin": False, "details": str(e)}, 
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class UserWorkStatsAPI(APIView):

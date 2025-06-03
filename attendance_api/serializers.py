@@ -12,8 +12,8 @@ class AttendanceLogSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = AttendanceLog
-        fields = ['id', 'user', 'user_name', 'check_in_time', 'check_out_time']
-        read_only_fields = ['user_name'] # user_name chỉ để hiển thị
+        fields = ['id', 'user', 'user_name', 'check_in_time', 'check_out_time', 'latitude', 'longitude']
+        read_only_fields = ['user_name']
         
 class RegisteredUserListSerializer(serializers.ModelSerializer):
     class Meta:
